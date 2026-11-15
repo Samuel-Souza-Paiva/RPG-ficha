@@ -46,7 +46,6 @@ const ATRIBUTOS = [
 const ANCESTRALIDADES = ["Humano", "Elfo", "Anão", "Halfling", "Meio-Orc", "Goblin"];
 const CLASSES = ["Guerreiro", "Sacerdote", "Ladino", "Mago"];
 const ALINHAMENTOS = ["", "Leal", "Neutro", "Caótico"];
-const LUZ_MS = 60 * 60 * 1000; // uma tocha dura 1 hora real
 
 const modificador = (v) => {
   v = Number(v) || 0;
@@ -85,7 +84,6 @@ function fichaNova(jogador) {
     equipamento: [],
     espacosBonus: 0,
     moedas: { po: 0, pp: 0, pc: 0 },
-    luz: { rodando: false, restante: LUZ_MS, desde: 0 },
     notas: "",
   };
 }
@@ -100,45 +98,6 @@ function espacosUsados(f) {
 }
 const espacosTotais = (f) => Math.max(Number(f.atributos?.FOR) || 0, 10) + (Number(f.espacosBonus) || 0);
 
-function luzRestante(luz) {
-  if (!luz) return LUZ_MS;
-  if (!luz.rodando) return Math.max(0, Number(luz.restante) || 0);
-  return Math.max(0, (Number(luz.restante) || 0) - (Date.now() - (Number(luz.desde) || Date.now())));
-}
-const fmtTempo = (ms) => {
-  const s = Math.ceil(ms / 1000);
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-};
-
-// ---------- Dados ----------
-const d = (n) => 1 + Math.floor(Math.random() * n);
-function rolarExpressao(expr) {
-  // aceita "1d8+2", "2d6", "d4-1", "+3"
-  const texto = String(expr || "").replace(/\s+/g, "").toLowerCase();
-  if (!texto) return null;
-  let total = 0;
-  const partes = [];
-  const re = /([+-]?)(\d*)d(\d+)|([+-]?)(\d+)/g;
-  let m;
-  let achou = false;
-  while ((m = re.exec(texto))) {
-    achou = true;
-    if (m[3]) {
-      const sinal = m[1] === "-" ? -1 : 1;
-      const qtd = Math.min(Number(m[2] || 1), 50);
-      const lados = Math.min(Number(m[3]), 1000);
-      const rs = Array.from({ length: qtd }, () => d(lados));
-      total += sinal * rs.reduce((a, b) => a + b, 0);
-      partes.push(`${sinal < 0 ? "−" : ""}[${rs.join(", ")}]`);
-    } else if (m[5]) {
-      const v = Number(m[5]) * (m[4] === "-" ? -1 : 1);
-      total += v;
-      partes.push(fmtMod(v));
-    }
-  }
-  return achou ? { total, detalhe: partes.join(" ") } : null;
-}
-
 function toast({ rotulo, valor, detalhe, tipo }) {
   const el = document.createElement("div");
   el.className = `toast ${tipo || ""}`;
@@ -149,19 +108,6 @@ function toast({ rotulo, valor, detalhe, tipo }) {
   el.addEventListener("click", () => el.remove());
   setTimeout(() => { el.classList.add("saindo"); setTimeout(() => el.remove(), 300); }, 4200);
 }
-function rolarD20(rotulo, mod = 0) {
-  const r = d(20);
-  const total = r + mod;
-  toast({
-    rotulo,
-    valor: total,
-    detalhe: `d20 [${r}] ${fmtMod(mod)}${r === 20 ? " — CRÍTICO!" : r === 1 ? " — FALHA CRÍTICA" : ""}`,
-    tipo: r === 20 ? "critico" : r === 1 ? "falha" : "",
-  });
-  return r;
-}
-if (navigator.vibrate) document.addEventListener("click", (e) => { if (e.target.closest("[data-rolar]")) navigator.vibrate(15); });
-
 // ============================================================
 // SINCRONIZAÇÃO (WebSocket + fila offline persistente)
 // ============================================================
@@ -365,7 +311,6 @@ function rota() {
   const h = location.hash.replace(/^#\/?/, "");
   const partes = h.split("/").filter(Boolean).map(decodeURIComponent);
   if (desmontar) { desmontar(); desmontar = null; }
-  document.body.classList.remove("com-dados");
   window.scrollTo(0, 0);
   if (partes[0] === "m" && partes[1]) {
     const mesa = normalizarMesa(partes[1]);
@@ -490,7 +435,6 @@ function cardPersonagem(f) {
 // ============================================================
 function telaFicha(mesa, id) {
   const timers = new Map(); // debounce por caminho
-  let intervaloLuz = null;
   const ficha = () => sync.fichas.get(id)?.data;
   const base = `#/m/${encodeURIComponent(mesa)}`;
 
@@ -500,8 +444,6 @@ function telaFicha(mesa, id) {
     const off = sync.ouvir(() => { if (ficha()) { off(); desmontar = telaFicha(mesa, id); } });
     return off;
   }
-
-  document.body.classList.add("com-dados");
 
   // ---------- escrita ----------
   const valorDe = (el) => {
@@ -608,28 +550,15 @@ function telaFicha(mesa, id) {
         ${ATRIBUTOS.map(([s, nome]) => `
           <div class="atributo">
             <div class="sigla" title="${nome}">${s}</div>
-            <button class="mod" data-rolar="atr" data-atr="${s}" aria-label="Rolar teste de ${nome}" id="mod-${s}"></button>
+            <div class="mod" id="mod-${s}" aria-label="Modificador de ${nome}"></div>
             <input data-bind="atributos.${s}" type="number" inputmode="numeric" data-tipo="num" min="1" max="20" aria-label="${nome}">
           </div>`).join("")}
-      </div>
-      <p class="dica" style="text-align:center">Toque no modificador para rolar o teste.</p>
-    </section>
-
-    <section class="cartao">
-      <h2 class="secao-titulo">Fonte de luz</h2>
-      <div class="luz" id="luz">
-        <div class="chama">🔥</div>
-        <div class="tempo" id="luz-tempo">60:00</div>
-        <div class="botoes">
-          <button class="icone-btn" id="luz-play" aria-label="Acender/apagar">▶</button>
-          <button class="icone-btn" id="luz-reset" aria-label="Nova tocha">↺</button>
-        </div>
       </div>
     </section>
 
     <section class="cartao">
       <h2 class="secao-titulo">Ataques</h2>
-      <div class="cabecalho-lista"><span class="w-nome">Arma / ataque</span><span class="w-p">Bônus</span><span class="w-m">Dano</span><span class="w-b"></span><span class="w-b"></span></div>
+      <div class="cabecalho-lista"><span class="w-nome">Arma / ataque</span><span class="w-p">Bônus</span><span class="w-m">Dano</span><span class="w-b"></span></div>
       <ul class="lista" id="l-ataques"></ul>
       <button class="btn fantasma pequeno add-linha" data-add="ataques">+ ataque</button>
     </section>
@@ -667,11 +596,7 @@ function telaFicha(mesa, id) {
       <textarea data-bind="notas" placeholder="Pistas, juramentos, dívidas, inimigos…" maxlength="20000"></textarea>
     </section>
 
-    <div class="zona-perigo"><button class="btn sangue pequeno" id="apagar">Apagar personagem</button></div>
-
-    <nav class="dados" aria-label="Rolar dados">
-      ${[4, 6, 8, 10, 12, 20, 100].map((n) => `<button data-rolar="d" data-d="${n}">d${n}</button>`).join("")}
-    </nav>`;
+    <div class="zona-perigo"><button class="btn sangue pequeno" id="apagar">Apagar personagem</button></div>`;
 
     LISTAS.forEach(desenharLista);
     sincronizarCampos(true);
@@ -692,13 +617,11 @@ function telaFicha(mesa, id) {
     if (nome === "ataques")
       return `<li><input class="w-nome" data-bind="${p}.nome" placeholder="Espada longa" maxlength="60">
         <input class="w-p" data-bind="${p}.bonus" placeholder="+0" maxlength="6">
-        <input class="w-m" data-bind="${p}.dano" placeholder="1d8" maxlength="20">
-        <button class="icone-btn menor" data-rolar="ataque" data-i="${i}" aria-label="Rolar ataque">⚔</button>${remover}</li>`;
+        <input class="w-m" data-bind="${p}.dano" placeholder="1d8" maxlength="20">${remover}</li>`;
     if (nome === "magias")
       return `<li class="${item.perdida ? "perdida" : ""}"><input class="w-nome" data-bind="${p}.nome" placeholder="Luz" maxlength="60">
         <input class="w-p" data-bind="${p}.grau" type="number" inputmode="numeric" data-tipo="num" min="1" max="5">
-        <label class="check" title="Perdida até descansar"><input type="checkbox" data-bind="${p}.perdida"><span>✗</span></label>
-        <button class="icone-btn menor" data-rolar="magia" data-i="${i}" aria-label="Conjurar">✶</button>${remover}</li>`;
+        <label class="check" title="Perdida até descansar"><input type="checkbox" data-bind="${p}.perdida"><span>✗</span></label>${remover}</li>`;
     if (nome === "talentos")
       return `<li><input class="w-nome" data-bind="${p}.texto" placeholder="+1 em ataques com armas corpo a corpo" maxlength="200">${remover}</li>`;
     return `<li><input class="w-nome" data-bind="${p}.nome" placeholder="Tocha" maxlength="60">
@@ -763,23 +686,6 @@ function telaFicha(mesa, id) {
       $("#slots").innerHTML = Array.from({ length: n }, (_, i) =>
         `<i class="${i < usados ? (i >= total ? "excesso" : "cheio") : ""}"></i>`).join("");
     }
-    atualizarLuz();
-  }
-
-  function atualizarLuz() {
-    const f = ficha();
-    const box = $("#luz");
-    if (!f || !box) return;
-    const luz = f.luz || { rodando: false, restante: LUZ_MS };
-    const r = luzRestante(luz);
-    const acesa = luz.rodando && r > 0;
-    box.classList.toggle("acesa", acesa);
-    const t = $("#luz-tempo");
-    t.textContent = r > 0 ? fmtTempo(r) : "Apagou";
-    t.classList.toggle("fim", r <= 0 || r < 5 * 60 * 1000);
-    $("#luz-play").textContent = acesa ? "❚❚" : "▶";
-    clearInterval(intervaloLuz);
-    if (acesa) intervaloLuz = setInterval(atualizarLuz, 1000);
   }
 
   // ---------- eventos ----------
@@ -798,7 +704,7 @@ function telaFicha(mesa, id) {
   };
   const aoClicar = (e) => {
     const f = ficha();
-    const alvo = e.target.closest("button, [data-rolar]");
+    const alvo = e.target.closest("button");
     if (!alvo || !f) return;
 
     if (alvo.dataset.pv) {
@@ -820,46 +726,6 @@ function telaFicha(mesa, id) {
       sync.set(id, [nome], lista);
       desenharLista(nome);
       atualizarDerivados();
-    } else if (alvo.dataset.rolar === "atr") {
-      const s = alvo.dataset.atr;
-      rolarD20(`Teste de ${ATRIBUTOS.find((a) => a[0] === s)[1]}`, modificador(f.atributos?.[s]));
-    } else if (alvo.dataset.rolar === "d") {
-      const n = Number(alvo.dataset.d);
-      const r = d(n);
-      toast({ rotulo: `d${n}`, valor: r, tipo: n === 20 && r === 20 ? "critico" : n === 20 && r === 1 ? "falha" : "" });
-    } else if (alvo.dataset.rolar === "ataque") {
-      const at = f.ataques?.[Number(alvo.dataset.i)] || {};
-      const bonus = parseInt(String(at.bonus || "0").replace(/\s/g, ""), 10) || 0;
-      const nat = d(20);
-      const dano = rolarExpressao(at.dano);
-      const crit = nat === 20;
-      let danoTotal = dano?.total;
-      if (crit && dano) danoTotal += rolarExpressao(String(at.dano).replace(/[+-]\d+$/, ""))?.total || 0; // crítico: dados de dano em dobro
-      toast({
-        rotulo: at.nome || "Ataque",
-        valor: `${nat + bonus}${dano ? ` · ${danoTotal} dano` : ""}`,
-        detalhe: `d20 [${nat}] ${fmtMod(bonus)}${dano ? ` · ${at.dano}: ${dano.detalhe}` : ""}${crit ? " — CRÍTICO! dados em dobro" : nat === 1 ? " — FALHA CRÍTICA" : ""}`,
-        tipo: crit ? "critico" : nat === 1 ? "falha" : "",
-      });
-    } else if (alvo.dataset.rolar === "magia") {
-      const mg = f.magias?.[Number(alvo.dataset.i)] || {};
-      const cls = String(f.classe || "").toLowerCase();
-      const atr = cls.startsWith("sacerd") || cls.startsWith("priest") ? "SAB" : cls.startsWith("mag") || cls.startsWith("wiz") ? "INT" : modificador(f.atributos?.SAB) > modificador(f.atributos?.INT) ? "SAB" : "INT";
-      const cd = 10 + (Number(mg.grau) || 1);
-      const nat = rolarD20(`${mg.nome || "Magia"} (CD ${cd}, ${atr})`, modificador(f.atributos?.[atr]));
-      const total = nat + modificador(f.atributos?.[atr]);
-      if (nat !== 20 && total < cd && !mg.perdida) {
-        definir(`magias.${alvo.dataset.i}.perdida`, true);
-      }
-    } else if (alvo.id === "luz-play") {
-      const luz = { ...(f.luz || { restante: LUZ_MS }) };
-      const r = luzRestante(luz);
-      const nova = luz.rodando ? { rodando: false, restante: r, desde: 0 } : { rodando: r > 0, restante: r, desde: Date.now() };
-      sync.set(id, ["luz"], nova);
-      atualizarLuz();
-    } else if (alvo.id === "luz-reset") {
-      sync.set(id, ["luz"], { rodando: false, restante: LUZ_MS, desde: 0 });
-      atualizarLuz();
     } else if (alvo.id === "apagar") {
       const nome = f.nome || "este personagem";
       if (confirm(`Apagar ${nome} para sempre? Esta ação não tem volta.`)) {
@@ -922,7 +788,6 @@ function telaFicha(mesa, id) {
 
   return () => {
     descarregar();
-    clearInterval(intervaloLuz);
     offSync();
     app.removeEventListener("input", aoDigitar);
     app.removeEventListener("change", aoDigitar);

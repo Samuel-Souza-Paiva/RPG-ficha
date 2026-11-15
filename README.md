@@ -9,9 +9,9 @@ Fichas de **Shadowdark** para celular, salvas em tempo real na Cloudflare.
 - Na próxima sessão é só abrir a mesa: a ficha está como ficou.
 
 Recursos da ficha: identidade, PV com −/+ e aviso de "morrendo", CA, ficha de sorte, atributos com modificador
-automático (toque para rolar d20), timer de tocha (1 h real), ataques com rolagem de acerto + dano, magias
-(conjurar contra CD 10 + grau e marcar como perdida), talentos, equipamento com contagem de espaços
-(FOR ou 10, moedas acima de 100 ocupam espaço), moedas, anotações e barra de dados (d4…d100).
+automático, ataques (bônus e dano), magias
+(com marcação de perdida), talentos, equipamento com contagem de espaços
+(FOR ou 10, moedas acima de 100 ocupam espaço), moedas e anotações.
 
 ## Como funciona
 
