@@ -8,10 +8,10 @@ Fichas de **Shadowdark** para celular, salvas em tempo real na Cloudflare.
 - Sem internet? As alterações ficam guardadas no aparelho e são enviadas quando a conexão voltar.
 - Na próxima sessão é só abrir a mesa: a ficha está como ficou.
 
-Recursos da ficha: identidade, PV com −/+ e aviso de "morrendo", CA, ficha de sorte, atributos com modificador
-automático, ataques (bônus e dano), magias
-(com marcação de perdida), talentos, equipamento com contagem de espaços
-(FOR ou 10, moedas acima de 100 ocupam espaço), moedas e anotações.
+Campos da ficha (iguais à ficha impressa de Shadowdark): nome; FOR, DES, CON, INT, SAB e CAR (valor / modificador
+calculado); ancestralidade; classe; nível; XP (atual / próximo nível); PV; CA; título; alinhamento; antecedente;
+divindade; ataques; talentos/magias; equipamento com 20 espaços (os que passam da carga — FOR ou 10 — ficam
+apagados), PO/PP/PC e carga livre.
 
 ## Como funciona
 

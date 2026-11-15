@@ -61,42 +61,32 @@ const modificador = (v) => {
 };
 const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`);
 
+const SLOTS = 20; // linhas de equipamento da ficha
+
 function fichaNova(jogador) {
   return {
     nome: "",
     jogador: jogador || "",
+    atributos: { FOR: 10, DES: 10, CON: 10, INT: 10, SAB: 10, CAR: 10 },
     ancestralidade: "",
     classe: "",
     nivel: 1,
     xp: 0,
+    pv: { atual: 1, max: 1 },
+    ca: 10,
     titulo: "",
     alinhamento: "",
     antecedente: "",
     divindade: "",
-    idiomas: "Comum",
-    atributos: { FOR: 10, DES: 10, CON: 10, INT: 10, SAB: 10, CAR: 10 },
-    pv: { atual: 1, max: 1 },
-    ca: 10,
-    sorte: false,
-    ataques: [],
-    magias: [],
-    talentos: [],
-    equipamento: [],
-    espacosBonus: 0,
+    ataques: "",
+    talentos: "",
     moedas: { po: 0, pp: 0, pc: 0 },
-    notas: "",
+    equipamento: Array(SLOTS).fill(""),
+    cargaLivre: "",
   };
 }
 
-function espacosUsados(f) {
-  const itens = (f.equipamento || []).reduce((s, it) => s + (Number(it.espacos) || 0), 0);
-  const m = f.moedas || {};
-  const moedas = (Number(m.po) || 0) + (Number(m.pp) || 0) + (Number(m.pc) || 0);
-  // as primeiras 100 moedas são grátis; depois, 1 espaço a cada 100
-  const espMoedas = moedas > 100 ? Math.ceil((moedas - 100) / 100) : 0;
-  return itens + espMoedas;
-}
-const espacosTotais = (f) => Math.max(Number(f.atributos?.FOR) || 0, 10) + (Number(f.espacosBonus) || 0);
+const espacosTotais = (f) => Math.max(Number(f.atributos?.FOR) || 0, 10);
 
 function toast({ rotulo, valor, detalhe, tipo }) {
   const el = document.createElement("div");
@@ -447,7 +437,6 @@ function telaFicha(mesa, id) {
 
   // ---------- escrita ----------
   const valorDe = (el) => {
-    if (el.type === "checkbox") return el.checked;
     if (el.dataset.tipo === "num") {
       const n = parseInt(el.value, 10);
       return Number.isFinite(n) ? n : 0;
@@ -483,9 +472,11 @@ function telaFicha(mesa, id) {
   // ---------- montagem ----------
   const campo = (rotulo, path, extra = "") => `<label class="campo"><span>${rotulo}</span><input data-bind="${path}" ${extra}></label>`;
   const opcoes = (lista) => lista.map((o) => `<option value="${esc(o)}">${esc(o || "—")}</option>`).join("");
+  const NUM = 'type="number" inputmode="numeric" data-tipo="num"';
+  // mesma disposição da ficha impressa: FOR INT / DES SAB / CON CAR
+  const ORDEM_ATR = ["FOR", "INT", "DES", "SAB", "CON", "CAR"];
 
   function montar() {
-    const f = ficha();
     const meus = abasPersonagens();
     app.innerHTML = `
     <header class="topo" style="flex-wrap:wrap">
@@ -496,145 +487,93 @@ function telaFicha(mesa, id) {
     </header>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Identidade</h2>
       ${campo("Nome", "nome", 'placeholder="Nome do personagem" maxlength="60"')}
-      <div class="grade-2">
-        <label class="campo"><span>Ancestralidade</span><input data-bind="ancestralidade" list="dl-anc" maxlength="40"></label>
-        <label class="campo"><span>Classe</span><input data-bind="classe" list="dl-cls" maxlength="40"></label>
-        ${campo("Nível", "nivel", 'type="number" inputmode="numeric" data-tipo="num" min="0" max="10"')}
-        ${campo("XP", "xp", 'type="number" inputmode="numeric" data-tipo="num" min="0"')}
+      <div class="atributos">
+        ${ORDEM_ATR.map((s) => {
+          const nome = ATRIBUTOS.find((a) => a[0] === s)[1];
+          return `<div class="atributo">
+            <span class="sigla" title="${nome}">${s}</span>
+            <input data-bind="atributos.${s}" ${NUM} min="1" max="20" aria-label="${nome}">
+            <span class="barra">/</span>
+            <span class="mod" id="mod-${s}" aria-label="Modificador de ${nome}"></span>
+          </div>`;
+        }).join("")}
       </div>
-      <div class="xp-info" id="xp-info"></div>
-      <div class="grade-2">
-        ${campo("Título", "titulo", 'maxlength="40"')}
-        <label class="campo"><span>Alinhamento</span><select data-bind="alinhamento">${opcoes(ALINHAMENTOS)}</select></label>
-        ${campo("Antecedente", "antecedente", 'maxlength="60"')}
-        ${campo("Divindade", "divindade", 'maxlength="40"')}
+    </section>
+
+    <section class="cartao">
+      <label class="campo"><span>Ancestralidade</span><input data-bind="ancestralidade" list="dl-anc" maxlength="40"></label>
+      <label class="campo"><span>Classe</span><input data-bind="classe" list="dl-cls" maxlength="40"></label>
+      <div class="grade-nivel">
+        ${campo("Nível", "nivel", `${NUM} min="0" max="10"`)}
+        <label class="campo"><span>XP</span>
+          <div class="xp-linha"><input data-bind="xp" ${NUM} min="0" aria-label="XP atual"><span class="barra">/</span><b id="xp-prox"></b></div>
+        </label>
       </div>
-      ${campo("Idiomas", "idiomas", 'maxlength="120"')}
-      ${campo("Jogador", "jogador", 'maxlength="40"')}
       <datalist id="dl-anc">${opcoes(ANCESTRALIDADES)}</datalist>
       <datalist id="dl-cls">${opcoes(CLASSES)}</datalist>
     </section>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Vigor</h2>
       <div class="vitais-grandes">
         <div class="vital pv">
-          <span class="rotulo">Pontos de Vida</span>
+          <span class="rotulo">PV</span>
           <div class="pv-linha">
-            <input data-bind="pv.atual" type="number" inputmode="numeric" data-tipo="num" aria-label="PV atual">
+            <input data-bind="pv.atual" ${NUM} aria-label="PV atual">
             <span class="barra">/</span>
-            <input class="max" data-bind="pv.max" type="number" inputmode="numeric" data-tipo="num" aria-label="PV máximo">
+            <input class="max" data-bind="pv.max" ${NUM} aria-label="PV máximo">
           </div>
           <div class="pv-botoes">
             <button class="icone-btn menor" data-pv="-1" aria-label="Menos 1 PV">−</button>
             <button class="icone-btn menor" data-pv="1" aria-label="Mais 1 PV">+</button>
           </div>
-          <div class="morrendo" id="morrendo" hidden>☠ Morrendo</div>
         </div>
         <div class="vital">
           <span class="rotulo">CA</span>
-          <input data-bind="ca" type="number" inputmode="numeric" data-tipo="num" aria-label="Classe de armadura">
-        </div>
-        <div class="vital">
-          <span class="rotulo">Sorte</span>
-          <label class="toggle"><input type="checkbox" data-bind="sorte"><span class="moeda">✦</span></label>
+          <input data-bind="ca" ${NUM} aria-label="Classe de armadura">
         </div>
       </div>
     </section>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Atributos</h2>
-      <div class="atributos">
-        ${ATRIBUTOS.map(([s, nome]) => `
-          <div class="atributo">
-            <div class="sigla" title="${nome}">${s}</div>
-            <div class="mod" id="mod-${s}" aria-label="Modificador de ${nome}"></div>
-            <input data-bind="atributos.${s}" type="number" inputmode="numeric" data-tipo="num" min="1" max="20" aria-label="${nome}">
-          </div>`).join("")}
-      </div>
+      ${campo("Título", "titulo", 'maxlength="60"')}
+      <label class="campo"><span>Alinhamento</span><select data-bind="alinhamento">${opcoes(ALINHAMENTOS)}</select></label>
+      ${campo("Antecedente", "antecedente", 'maxlength="60"')}
+      ${campo("Divindade", "divindade", 'maxlength="60"')}
     </section>
 
     <section class="cartao">
       <h2 class="secao-titulo">Ataques</h2>
-      <div class="cabecalho-lista"><span class="w-nome">Arma / ataque</span><span class="w-p">Bônus</span><span class="w-m">Dano</span><span class="w-b"></span></div>
-      <ul class="lista" id="l-ataques"></ul>
-      <button class="btn fantasma pequeno add-linha" data-add="ataques">+ ataque</button>
+      <textarea data-bind="ataques" rows="4" placeholder="Espada longa +2 (1d8)" maxlength="4000"></textarea>
     </section>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Magias</h2>
-      <div class="cabecalho-lista"><span class="w-nome">Magia</span><span class="w-p">Grau</span><span class="w-b" title="Perdida">✗</span><span class="w-b"></span></div>
-      <ul class="lista" id="l-magias"></ul>
-      <button class="btn fantasma pequeno add-linha" data-add="magias">+ magia</button>
+      <h2 class="secao-titulo">Talentos / Magias</h2>
+      <textarea data-bind="talentos" rows="6" maxlength="10000"></textarea>
     </section>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Talentos</h2>
-      <ul class="lista" id="l-talentos"></ul>
-      <button class="btn fantasma pequeno add-linha" data-add="talentos">+ talento</button>
-    </section>
-
-    <section class="cartao">
-      <h2 class="secao-titulo">Equipamento</h2>
-      <div class="espacos" id="espacos"><span>Espaços</span><b id="esp-txt"></b></div>
-      <div class="slots" id="slots"></div>
-      <div class="cabecalho-lista"><span class="w-nome">Item</span><span class="w-p">Qtd</span><span class="w-p">Esp.</span><span class="w-b"></span></div>
-      <ul class="lista" id="l-equipamento"></ul>
-      <button class="btn fantasma pequeno add-linha" data-add="equipamento">+ item</button>
+      <h2 class="secao-titulo">Equip.</h2>
       <div class="moedas">
-        ${campo("Ouro", "moedas.po", 'type="number" inputmode="numeric" data-tipo="num" min="0"')}
-        ${campo("Prata", "moedas.pp", 'type="number" inputmode="numeric" data-tipo="num" min="0"')}
-        ${campo("Cobre", "moedas.pc", 'type="number" inputmode="numeric" data-tipo="num" min="0"')}
+        ${campo("PO", "moedas.po", `${NUM} min="0"`)}
+        ${campo("PP", "moedas.pp", `${NUM} min="0"`)}
+        ${campo("PC", "moedas.pc", `${NUM} min="0"`)}
       </div>
-      <div style="max-width:160px">${campo("Espaços extras", "espacosBonus", 'type="number" inputmode="numeric" data-tipo="num"')}</div>
+      <ol class="equip" id="equip">
+        ${Array.from({ length: SLOTS }, (_, i) => `<li><span class="n">${i + 1}.</span><input data-bind="equipamento.${i}" maxlength="80" aria-label="Espaço ${i + 1}"></li>`).join("")}
+      </ol>
+      <p class="dica" id="equip-info"></p>
+      <label class="campo"><span>Carga livre</span><textarea data-bind="cargaLivre" rows="3" maxlength="2000"></textarea></label>
     </section>
 
     <section class="cartao">
-      <h2 class="secao-titulo">Anotações</h2>
-      <textarea data-bind="notas" placeholder="Pistas, juramentos, dívidas, inimigos…" maxlength="20000"></textarea>
+      ${campo("Jogador", "jogador", 'maxlength="40"')}
     </section>
 
     <div class="zona-perigo"><button class="btn sangue pequeno" id="apagar">Apagar personagem</button></div>`;
 
-    LISTAS.forEach(desenharLista);
     sincronizarCampos(true);
     atualizarDerivados();
-  }
-
-  // ---------- listas ----------
-  const LISTAS = ["ataques", "magias", "talentos", "equipamento"];
-  const NOVOS = {
-    ataques: () => ({ nome: "", bonus: "+0", dano: "1d6" }),
-    magias: () => ({ nome: "", grau: 1, perdida: false }),
-    talentos: () => ({ texto: "" }),
-    equipamento: () => ({ nome: "", qtd: 1, espacos: 1 }),
-  };
-  function linhaLista(nome, item, i) {
-    const p = `${nome}.${i}`;
-    const remover = `<button class="icone-btn menor perigo" data-del="${nome}" data-i="${i}" aria-label="Remover">×</button>`;
-    if (nome === "ataques")
-      return `<li><input class="w-nome" data-bind="${p}.nome" placeholder="Espada longa" maxlength="60">
-        <input class="w-p" data-bind="${p}.bonus" placeholder="+0" maxlength="6">
-        <input class="w-m" data-bind="${p}.dano" placeholder="1d8" maxlength="20">${remover}</li>`;
-    if (nome === "magias")
-      return `<li class="${item.perdida ? "perdida" : ""}"><input class="w-nome" data-bind="${p}.nome" placeholder="Luz" maxlength="60">
-        <input class="w-p" data-bind="${p}.grau" type="number" inputmode="numeric" data-tipo="num" min="1" max="5">
-        <label class="check" title="Perdida até descansar"><input type="checkbox" data-bind="${p}.perdida"><span>✗</span></label>${remover}</li>`;
-    if (nome === "talentos")
-      return `<li><input class="w-nome" data-bind="${p}.texto" placeholder="+1 em ataques com armas corpo a corpo" maxlength="200">${remover}</li>`;
-    return `<li><input class="w-nome" data-bind="${p}.nome" placeholder="Tocha" maxlength="60">
-      <input class="w-p" data-bind="${p}.qtd" type="number" inputmode="numeric" data-tipo="num" min="0">
-      <input class="w-p" data-bind="${p}.espacos" type="number" inputmode="numeric" data-tipo="num" min="0">${remover}</li>`;
-  }
-  function desenharLista(nome) {
-    const ul = $(`#l-${nome}`);
-    if (!ul) return;
-    const itens = ficha()[nome] || [];
-    ul.innerHTML = itens.map((it, i) => linhaLista(nome, it || {}, i)).join("") ||
-      `<li class="dica" style="justify-content:center">— vazio —</li>`;
-    sincronizarCampos(true, ul);
   }
 
   // ---------- leitura (dados -> tela) ----------
@@ -644,11 +583,8 @@ function telaFicha(mesa, id) {
     for (const el of $$("[data-bind]", raiz)) {
       if (!forcar && timers.has(el.dataset.bind)) continue; // não atrapalha quem está digitando
       const v = getPath(f, parsePath(el.dataset.bind));
-      if (el.type === "checkbox") el.checked = !!v;
-      else {
-        const s = v == null ? "" : String(v);
-        if (el.value !== s) el.value = s;
-      }
+      const s = v == null || typeof v === "object" ? "" : String(v);
+      if (el.value !== s) el.value = s;
     }
   }
 
@@ -662,37 +598,21 @@ function telaFicha(mesa, id) {
       const el = $(`#mod-${s}`);
       if (el) el.textContent = fmtMod(modificador(f.atributos?.[s]));
     }
-    // XP: em Shadowdark sobe de nível com nível × 10 XP
-    const nivel = Number(f.nivel) || 0;
-    const prox = Math.max(1, nivel) * 10;
-    const xpEl = $("#xp-info");
-    if (xpEl) {
-      const pode = (Number(f.xp) || 0) >= prox && nivel < 10;
-      xpEl.textContent = pode ? `⚔ Pronto para subir ao nível ${nivel + 1}!` : `Próximo nível: ${prox} XP`;
-      xpEl.classList.toggle("subir", pode);
-    }
-    const mor = $("#morrendo");
-    if (mor) mor.hidden = !((Number(f.pv?.atual) || 0) <= 0);
-    // magias perdidas
-    $$("#l-magias > li").forEach((li, i) => li.classList.toggle("perdida", !!f.magias?.[i]?.perdida));
-    // espaços de equipamento
-    const usados = espacosUsados(f);
-    const total = espacosTotais(f);
-    const txt = $("#esp-txt");
-    if (txt) {
-      txt.textContent = `${usados} / ${total}`;
-      $("#espacos").classList.toggle("excesso", usados > total);
-      const n = Math.min(Math.max(usados, total), 60);
-      $("#slots").innerHTML = Array.from({ length: n }, (_, i) =>
-        `<i class="${i < usados ? (i >= total ? "excesso" : "cheio") : ""}"></i>`).join("");
-    }
+    // XP: em Shadowdark o próximo nível exige nível × 10 XP
+    const prox = $("#xp-prox");
+    if (prox) prox.textContent = Math.max(1, Number(f.nivel) || 0) * 10;
+    // espaços de equipamento: FOR ou 10, o que for maior
+    const cap = espacosTotais(f);
+    $$("#equip > li").forEach((li, i) => li.classList.toggle("alem", i >= cap));
+    const info = $("#equip-info");
+    if (info) info.textContent = `Espaços disponíveis: ${cap} (FOR ou 10, o que for maior)`;
   }
 
   // ---------- eventos ----------
   const aoDigitar = (e) => {
     const el = e.target.closest("[data-bind]");
     if (!el) return;
-    const imediato = el.type === "checkbox" || el.tagName === "SELECT";
+    const imediato = el.tagName === "SELECT";
     // "change" em campos de texto dispara ao sair do campo e reenviaria um valor velho
     if (e.type === "change" && !imediato) return;
     if (e.type === "input" && imediato) return;
@@ -710,22 +630,6 @@ function telaFicha(mesa, id) {
     if (alvo.dataset.pv) {
       const atual = Number(f.pv?.atual) || 0;
       definir("pv.atual", atual + Number(alvo.dataset.pv));
-    } else if (alvo.dataset.add) {
-      const nome = alvo.dataset.add;
-      const lista = [...(f[nome] || []), NOVOS[nome]()];
-      sync.set(id, [nome], lista);
-      desenharLista(nome);
-      atualizarDerivados();
-      const inputs = $$(`#l-${nome} > li:last-child input`);
-      inputs[0]?.focus();
-    } else if (alvo.dataset.del) {
-      const nome = alvo.dataset.del;
-      const i = Number(alvo.dataset.i);
-      descarregar();
-      const lista = (f[nome] || []).filter((_, j) => j !== i);
-      sync.set(id, [nome], lista);
-      desenharLista(nome);
-      atualizarDerivados();
     } else if (alvo.id === "apagar") {
       const nome = f.nome || "este personagem";
       if (confirm(`Apagar ${nome} para sempre? Esta ação não tem volta.`)) {
@@ -753,13 +657,6 @@ function telaFicha(mesa, id) {
       return;
     }
     if (!ficha()) return;
-    if (ev.t === "tudo") {
-      LISTAS.forEach((n) => { if ($$(`#l-${n} [data-bind]`).length === 0 || listaMudou(n)) desenharLista(n); });
-    } else if (ev.t === "set" && ev.id === id && LISTAS.includes(ev.path[0]) && listaMudou(ev.path[0])) {
-      // não redesenha a lista se alguém está digitando nela
-      const ul = $(`#l-${ev.path[0]}`);
-      if (!ul?.contains(document.activeElement)) desenharLista(ev.path[0]);
-    }
     if (ev.t === "upsert" || ev.t === "tudo" || ev.t === "delete") atualizarAbas();
     sincronizarCampos();
     atualizarDerivados();
@@ -769,11 +666,6 @@ function telaFicha(mesa, id) {
     const meus = [...sync.fichas.values()].filter(ehMeu);
     if (!meus.some((x) => x.id === id) && sync.fichas.get(id)) meus.unshift(sync.fichas.get(id));
     return meus;
-  }
-  function listaMudou(nome) {
-    const n = (ficha()[nome] || []).length;
-    const dom = $$(`#l-${nome} > li`).filter((li) => li.querySelector("[data-bind]")).length;
-    return n !== dom;
   }
   function atualizarAbas() {
     // simples: só reconstrói a barra de abas se o número de personagens mudar
