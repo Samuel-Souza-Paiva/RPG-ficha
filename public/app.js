@@ -2,6 +2,8 @@
 // FICHA SOMBRIA — fichas de Shadowdark em tempo real
 // ============================================================
 
+import { arteCapa, arteFundo, cinzas } from "./arte.js";
+
 // ---------- Utilidades ----------
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -61,7 +63,7 @@ const modificador = (v) => {
 };
 const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`);
 
-const SLOTS = 20; // linhas de equipamento da ficha
+const TOCHA_MS = 60 * 60 * 1000; // uma tocha dura 1 hora real
 
 function fichaNova(jogador) {
   return {
@@ -80,13 +82,26 @@ function fichaNova(jogador) {
     divindade: "",
     ataques: "",
     talentos: "",
+    magias: [], // { id, nome, falhou }
     moedas: { po: 0, pp: 0, pc: 0 },
-    equipamento: Array(SLOTS).fill(""),
+    equipamento: [],
     cargaLivre: "",
+    tocha: { acesa: false, restante: 0, desde: 0 },
   };
 }
 
-const espacosTotais = (f) => Math.max(Number(f.atributos?.FOR) || 0, 10);
+// Espaços de equipamento = valor de FOR do personagem
+const espacosTotais = (f) => Math.max(0, Math.min(Number(f.atributos?.FOR) || 0, 40));
+
+function tochaRestante(t) {
+  if (!t) return 0;
+  const r = Number(t.restante) || 0;
+  return Math.max(0, t.acesa ? r - (Date.now() - (Number(t.desde) || Date.now())) : r);
+}
+const fmtTempo = (ms) => {
+  const s = Math.ceil(ms / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
 
 function toast({ rotulo, valor, detalhe, tipo }) {
   const el = document.createElement("div");
@@ -211,6 +226,9 @@ const sync = {
         this.salvarCache();
         this.avisar({ t: "delete", id: msg.id, remoto: true });
         break;
+      case "imagem":
+        if (!location.hash.startsWith("#/mestre")) mostrarImagem(msg);
+        break;
       case "ack":
         this.pendentes = this.pendentes.filter((p) => p.op !== msg.op);
         this.salvarPendentes();
@@ -220,7 +238,7 @@ const sync = {
         console.warn("Servidor:", msg.msg);
         this.pendentes = this.pendentes.filter((p) => p.op !== msg.op);
         this.salvarPendentes();
-        toast({ rotulo: "Erro ao salvar", valor: "⚠", detalhe: msg.msg, tipo: "falha" });
+        toast({ rotulo: msg.op ? "Erro ao salvar" : "Aviso", valor: "⚠", detalhe: msg.msg, tipo: "falha" });
         this.avisarEstado();
         break;
     }
@@ -302,7 +320,17 @@ function rota() {
   const partes = h.split("/").filter(Boolean).map(decodeURIComponent);
   if (desmontar) { desmontar(); desmontar = null; }
   window.scrollTo(0, 0);
-  if (partes[0] === "m" && partes[1]) {
+  if (partes[0] === "mestre") {
+    if (partes[1] === "m" && partes[2]) {
+      const mesa = normalizarMesa(partes[2]);
+      sync.abrir(mesa);
+      prefs.lembrarMesa(mesa);
+      desmontar = telaMestre(mesa);
+    } else {
+      sync.fechar();
+      desmontar = telaMestreEntrada();
+    }
+  } else if (partes[0] === "m" && partes[1]) {
     const mesa = normalizarMesa(partes[1]);
     sync.abrir(mesa);
     prefs.lembrarMesa(mesa);
@@ -326,22 +354,15 @@ function htmlStatus() {
 // ============================================================
 // TELA: ENTRADA
 // ============================================================
-const SELO = `<svg class="selo" viewBox="0 0 100 100" aria-hidden="true">
-  <circle cx="50" cy="50" r="46" fill="none" stroke="#e9e4d8" stroke-width="1.5" stroke-dasharray="2 3"/>
-  <circle cx="50" cy="50" r="40" fill="none" stroke="#e9e4d8" stroke-width="0.8"/>
-  <path d="M50 10 L54 62 L50 70 L46 62 Z" fill="#e9e4d8"/>
-  <path d="M34 62 H66 L62 66 H38 Z" fill="#e9e4d8"/>
-  <rect x="47.5" y="66" width="5" height="16" fill="#e9e4d8"/>
-  <circle cx="50" cy="86" r="4" fill="#e9e4d8"/>
-  <path d="M50 72 q-3 6 0 9 q3 -3 0 -9z" fill="#a3120f"/>
-  <path d="M20 30 L30 36 M80 30 L70 36 M18 70 L29 64 M82 70 L71 64" stroke="#e9e4d8" stroke-width="1.2"/>
-</svg>`;
+// camadas de arte fixas (fundo com massas de tinta e cinzas caindo)
+document.getElementById("fundo").innerHTML = arteFundo();
+document.getElementById("cinzas").innerHTML = cinzas();
 
 function telaEntrada() {
   const recentes = prefs.recentes;
   app.innerHTML = `
   <section class="entrada">
-    ${SELO}
+    <div class="capa">${arteCapa()}</div>
     <h1 class="titulo-app">Ficha Sombria</h1>
     <p class="subtitulo">fichas de shadowdark · em tempo real</p>
     <div class="traco"></div>
@@ -357,6 +378,7 @@ function telaEntrada() {
     </form>
     ${recentes.length ? `<div class="cartao"><h2 class="secao-titulo">Mesas recentes</h2>
       <ul class="mesas-recentes">${recentes.map((m) => `<li><a href="#/m/${encodeURIComponent(m)}">${esc(m)}</a></li>`).join("")}</ul></div>` : ""}
+    <p style="text-align:center;margin-top:24px"><a class="btn fantasma pequeno" href="#/mestre">Área do mestre</a></p>
   </section>`;
   $("#form-entrar").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -418,6 +440,288 @@ function cardPersonagem(f) {
     <div class="meta">${esc(meta)}${c.jogador ? ` — <span style="font-style:normal">${esc(c.jogador)}</span>` : ""}</div>
     <div class="vitais"><span>PV ${esc(pv.atual ?? 0)}/${esc(pv.max ?? 0)}</span><span class="barra-pv"><b style="width:${pct}%"></b></span><span>CA ${esc(c.ca ?? 10)}</span></div>
   </a>`;
+}
+
+// ============================================================
+// ÁREA DO MESTRE
+// ============================================================
+const mestre = {
+  get token() { return ls.get("mestreToken", ""); },
+  set token(v) { ls.set("mestreToken", v); },
+  async api(caminho, corpo, metodo = "POST") {
+    const r = await fetch(caminho, {
+      method: metodo,
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.token}` },
+      body: metodo === "GET" ? undefined : JSON.stringify(corpo || {}),
+    });
+    const dados = await r.json().catch(() => ({}));
+    if (r.status === 401 && caminho !== "/api/mestre/login") {
+      this.token = "";
+      toast({ rotulo: "Sessão do mestre expirou", valor: "🔒", detalhe: "Entre de novo", tipo: "falha" });
+      ir("#/mestre");
+    }
+    if (!r.ok) throw new Error(dados.erro || `Erro ${r.status}`);
+    return dados;
+  },
+  async verificar() {
+    if (!this.token) return false;
+    try {
+      const r = await fetch("/api/mestre/verificar", { headers: { authorization: `Bearer ${this.token}` } });
+      return !!(await r.json()).ok;
+    } catch {
+      return true; // sem internet: confia no token salvo; o servidor valida de novo em cada ação
+    }
+  },
+};
+
+function telaMestreEntrada() {
+  let vivo = true;
+  const desenharLogin = () => {
+    app.innerHTML = `
+    <header class="topo"><a class="icone-btn" href="#/" aria-label="Voltar">‹</a>
+      <div class="meio"><div class="nome-mesa">Ficha Sombria</div><div class="titulo-ficha">Área do Mestre</div></div><div style="width:40px"></div></header>
+    <form class="cartao" id="form-login" style="margin-top:24px">
+      <h2 class="secao-titulo">Entrar como mestre</h2>
+      <label class="campo"><span>Usuário</span><input name="usuario" autocomplete="username" autocapitalize="none" required></label>
+      <label class="campo"><span>Senha</span><input name="senha" type="password" autocomplete="current-password" required></label>
+      <div style="height:10px"></div>
+      <button class="btn bloco" type="submit">Entrar</button>
+    </form>`;
+    $("#form-login").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const botao = e.target.querySelector("button");
+      botao.disabled = true;
+      try {
+        const { token } = await mestre.api("/api/mestre/login", { usuario: fd.get("usuario"), senha: fd.get("senha") });
+        mestre.token = token;
+        if (vivo) desenharMesas();
+      } catch (err) {
+        toast({ rotulo: "Não foi possível entrar", valor: "🔒", detalhe: err.message, tipo: "falha" });
+        botao.disabled = false;
+      }
+    });
+  };
+  const desenharMesas = () => {
+    const recentes = prefs.recentes;
+    app.innerHTML = `
+    <header class="topo"><a class="icone-btn" href="#/" aria-label="Voltar">‹</a>
+      <div class="meio"><div class="nome-mesa">Ficha Sombria</div><div class="titulo-ficha">Área do Mestre</div></div>
+      <button class="icone-btn" id="sair" aria-label="Sair" title="Sair">⏻</button></header>
+    <form class="cartao" id="form-mesa" style="margin-top:24px">
+      <h2 class="secao-titulo">Abrir mesa</h2>
+      <label class="campo"><span>Código da mesa</span><input name="mesa" autocapitalize="none" autocomplete="off" value="${esc(recentes[0] || "")}" required maxlength="40"></label>
+      <button class="btn bloco" type="submit">Abrir painel</button>
+    </form>
+    ${recentes.length ? `<div class="cartao"><h2 class="secao-titulo">Mesas recentes</h2>
+      <ul class="mesas-recentes">${recentes.map((m) => `<li><a href="#/mestre/m/${encodeURIComponent(m)}">${esc(m)}</a></li>`).join("")}</ul></div>` : ""}`;
+    $("#form-mesa").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const mesa = normalizarMesa(new FormData(e.target).get("mesa"));
+      if (mesa.length >= 2) ir(`#/mestre/m/${encodeURIComponent(mesa)}`);
+    });
+    $("#sair").addEventListener("click", () => { mestre.token = ""; desenharLogin(); });
+  };
+  app.innerHTML = `<p class="vazio">…</p>`;
+  mestre.verificar().then((ok) => { if (vivo) (ok ? desenharMesas : desenharLogin)(); });
+  return () => { vivo = false; };
+}
+
+function telaMestre(mesa) {
+  if (!mestre.token) { ir("#/mestre"); return null; }
+  let ocupado = false;
+  let imagemPronta = null; // data URL comprimida
+  let timerNotas = null;
+  const rotaMesa = `/api/mesa/${encodeURIComponent(mesa)}`;
+
+  const cardMestre = (f) => {
+    const c = f.data;
+    const pv = c.pv || {};
+    const pct = pv.max > 0 ? Math.max(0, Math.min(100, (pv.atual / pv.max) * 100)) : 0;
+    const falhadas = (Array.isArray(c.magias) ? c.magias : []).filter((m) => m && m.falhou);
+    const t = c.tocha || {};
+    const r = tochaRestante(t);
+    const tocha = t.acesa && r > 0 ? fmtTempo(r) : "apagada";
+    return `<div class="cartao card-pers">
+      <div class="linha1"><a class="nome" href="#/m/${encodeURIComponent(mesa)}/p/${f.id}" style="color:inherit;text-decoration:none">${esc(c.nome || "Sem nome")}</a><span class="nivel">NV ${esc(c.nivel ?? 1)}</span></div>
+      <div class="meta">${esc([c.ancestralidade, c.classe].filter(Boolean).join(" · ") || "—")}${c.jogador ? ` — <span style="font-style:normal">${esc(c.jogador)}</span>` : ""}</div>
+      <div class="vitais"><span>PV ${esc(pv.atual ?? 0)}/${esc(pv.max ?? 0)}</span><span class="barra-pv"><b style="width:${pct}%"></b></span><span>CA ${esc(c.ca ?? 10)}</span></div>
+      <div class="mestre-info">
+        <span>Tocha: ${tocha}</span>
+        <span>${falhadas.length ? `Magias bloqueadas: <b>${falhadas.map((m) => esc(m.nome || "sem nome")).join(", ")}</b>` : "Nenhuma magia bloqueada"}</span>
+      </div>
+      <button class="btn fantasma pequeno" data-descanso="${f.id}">Descanso longo</button>
+    </div>`;
+  };
+
+  // estrutura fixa: só a lista de personagens é redesenhada ao vivo
+  app.innerHTML = `
+    <header class="topo">
+      <a class="icone-btn" href="#/mestre" aria-label="Voltar">‹</a>
+      <div class="meio"><div class="nome-mesa">Mestre · ${esc(mesa)}</div><div class="titulo-ficha">Painel</div></div>
+      <div id="status">${htmlStatus()}</div>
+    </header>
+
+    <section class="cartao">
+      <h2 class="secao-titulo">Recapitulação</h2>
+      <p class="dica" style="margin-top:0">Só você vê. Salva sozinho.</p>
+      <textarea id="notas-mestre" rows="8" placeholder="O que aconteceu na última sessão…" maxlength="100000" disabled></textarea>
+      <p class="dica" id="notas-status">Carregando…</p>
+    </section>
+
+    <section class="cartao">
+      <h2 class="secao-titulo">Revelar imagem</h2>
+      <p class="dica" style="margin-top:0">Aparece na tela de todos os jogadores por 10 segundos.</p>
+      <label class="btn fantasma bloco" for="arquivo-img">Escolher imagem</label>
+      <input type="file" id="arquivo-img" accept="image/*" hidden>
+      <div id="previa" class="previa" hidden></div>
+      <label class="campo"><span>Legenda (opcional)</span><input id="legenda-img" maxlength="140" placeholder="O que eles veem…"></label>
+      <button class="btn bloco" id="enviar-img" disabled>Mostrar aos jogadores</button>
+    </section>
+
+    <section class="cartao">
+      <h2 class="secao-titulo">Descanso longo</h2>
+      <p class="dica" style="margin-top:0">Recupera todos os PV e libera as magias que falharam.</p>
+      <button class="btn bloco" data-descanso="todos">Descanso longo para todos</button>
+    </section>
+
+    <div id="lista-mestre"></div>`;
+
+  const desenharLista = () => {
+    const todas = [...sync.fichas.values()];
+    $("#lista-mestre").innerHTML = !sync.carregado ? `<p class="vazio">Invocando as fichas…</p>` :
+      todas.length ? todas.map(cardMestre).join("") : `<p class="vazio">Nenhum personagem nesta mesa.</p>`;
+  };
+
+  // ---- anotações ----
+  const notas = $("#notas-mestre");
+  const statusNotas = $("#notas-status");
+  mestre.api(`${rotaMesa}/notas`, null, "GET").then((r) => {
+    notas.value = r.texto || "";
+    notas.disabled = false;
+    statusNotas.textContent = "Salvo";
+  }).catch((e) => { statusNotas.textContent = `Erro ao carregar: ${e.message}`; });
+  const salvarNotas = async () => {
+    clearTimeout(timerNotas); timerNotas = null;
+    try {
+      await mestre.api(`${rotaMesa}/notas`, { texto: notas.value }, "PUT");
+      statusNotas.textContent = "Salvo";
+    } catch (e) {
+      statusNotas.textContent = `Não salvou (${e.message}) — tentando de novo…`;
+      timerNotas = setTimeout(salvarNotas, 5000);
+    }
+  };
+  notas.addEventListener("input", () => {
+    statusNotas.textContent = "Salvando…";
+    clearTimeout(timerNotas);
+    timerNotas = setTimeout(salvarNotas, 800);
+  });
+  notas.addEventListener("blur", () => { if (timerNotas) salvarNotas(); });
+
+  // ---- imagem ----
+  $("#arquivo-img").addEventListener("change", async (e) => {
+    const arq = e.target.files?.[0];
+    if (!arq) return;
+    try {
+      imagemPronta = await comprimirImagem(arq);
+      const previa = $("#previa");
+      previa.innerHTML = `<img src="${imagemPronta}" alt="Prévia">`;
+      previa.hidden = false;
+      $("#enviar-img").disabled = false;
+    } catch (err) {
+      toast({ rotulo: "Imagem inválida", valor: "⚠", detalhe: err.message, tipo: "falha" });
+    }
+  });
+
+  const aoClicar = async (e) => {
+    if (e.target.closest("#enviar-img")) {
+      if (!imagemPronta || ocupado) return;
+      ocupado = true;
+      try {
+        const r = await mestre.api(`${rotaMesa}/imagem`, { src: imagemPronta, legenda: $("#legenda-img").value });
+        toast({ rotulo: "Imagem revelada", valor: "👁", detalhe: `Enviada para ${r.enviados} tela(s) conectada(s)` });
+      } catch (err) {
+        toast({ rotulo: "Não enviou", valor: "⚠", detalhe: err.message, tipo: "falha" });
+      } finally { ocupado = false; }
+      return;
+    }
+    const b = e.target.closest("[data-descanso]");
+    if (!b || ocupado) return;
+    const alvo = b.dataset.descanso;
+    const nome = alvo === "todos" ? "todos os personagens" : sync.fichas.get(alvo)?.data.nome || "este personagem";
+    if (!confirm(`Dar descanso longo para ${nome}?`)) return;
+    ocupado = true;
+    try {
+      const r = await mestre.api(`${rotaMesa}/descanso`, alvo === "todos" ? {} : { ids: [alvo] });
+      toast({ rotulo: "Descanso longo", valor: "☾", detalhe: `${r.descansaram} personagem(ns) recuperado(s)` });
+    } catch (err) {
+      toast({ rotulo: "Falhou", valor: "⚠", detalhe: err.message, tipo: "falha" });
+    } finally { ocupado = false; }
+  };
+
+  desenharLista();
+  app.addEventListener("click", aoClicar);
+  const relogio = setInterval(desenharLista, 15000); // atualiza o tempo das tochas
+  const off = sync.ouvir((ev) => {
+    if (ev.t === "estado") { const s = $("#status"); if (s) s.innerHTML = htmlStatus(); return; }
+    desenharLista();
+  });
+  return () => {
+    if (timerNotas) salvarNotas();
+    off(); clearInterval(relogio); app.removeEventListener("click", aoClicar);
+  };
+}
+
+/** Reduz a imagem no navegador (máx. 1280px, JPEG) para caber numa mensagem em tempo real. */
+async function comprimirImagem(arquivo) {
+  if (!arquivo.type.startsWith("image/")) throw new Error("O arquivo não é uma imagem");
+  const url = URL.createObjectURL(arquivo);
+  try {
+    const img = await new Promise((ok, falha) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => falha(new Error("Não consegui abrir a imagem"));
+      i.src = url;
+    });
+    for (const [lado, q] of [[1280, 0.8], [1024, 0.7], [800, 0.6], [640, 0.5]]) {
+      const escala = Math.min(1, lado / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.naturalWidth * escala);
+      cv.height = Math.round(img.naturalHeight * escala);
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      const dataUrl = cv.toDataURL("image/jpeg", q);
+      if (dataUrl.length < 850 * 1024) return dataUrl;
+    }
+    throw new Error("Imagem grande demais mesmo comprimida");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Pop-up de imagem nos jogadores: some sozinho depois de N segundos. */
+function mostrarImagem({ src, legenda, segundos = 10 }) {
+  if (typeof src !== "string" || !src.startsWith("data:image/")) return;
+  $("#revelacao")?.remove();
+  const el = document.createElement("div");
+  el.id = "revelacao";
+  el.className = "revelacao";
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-label", "Imagem do mestre");
+  el.innerHTML = `<figure>
+      <img alt="${esc(legenda || "Imagem enviada pelo mestre")}">
+      ${legenda ? `<figcaption>${esc(legenda)}</figcaption>` : ""}
+      <div class="contagem"><i style="animation-duration:${segundos}s"></i></div>
+    </figure>`;
+  el.querySelector("img").src = src;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+  setTimeout(() => {
+    el.classList.add("saindo");
+    setTimeout(() => el.remove(), 600);
+  }, segundos * 1000);
 }
 
 // ============================================================
@@ -549,7 +853,11 @@ function telaFicha(mesa, id) {
 
     <section class="cartao">
       <h2 class="secao-titulo">Talentos / Magias</h2>
-      <textarea data-bind="talentos" rows="6" maxlength="10000"></textarea>
+      <label class="campo"><span>Talentos</span><textarea data-bind="talentos" rows="4" maxlength="10000"></textarea></label>
+      <span class="rotulo">Magias</span>
+      <ul class="magias" id="magias"></ul>
+      <button class="btn fantasma pequeno" id="add-magia">+ magia</button>
+      <p class="dica">Use a magia à vontade. Se falhar no teste, toque em <b>Falhou</b>: ela fica bloqueada até o mestre dar o descanso longo.</p>
     </section>
 
     <section class="cartao">
@@ -559,11 +867,19 @@ function telaFicha(mesa, id) {
         ${campo("PP", "moedas.pp", `${NUM} min="0"`)}
         ${campo("PC", "moedas.pc", `${NUM} min="0"`)}
       </div>
-      <ol class="equip" id="equip">
-        ${Array.from({ length: SLOTS }, (_, i) => `<li><span class="n">${i + 1}.</span><input data-bind="equipamento.${i}" maxlength="80" aria-label="Espaço ${i + 1}"></li>`).join("")}
-      </ol>
       <p class="dica" id="equip-info"></p>
-      <label class="campo"><span>Carga livre</span><textarea data-bind="cargaLivre" rows="3" maxlength="2000"></textarea></label>
+      <ol class="equip" id="equip"></ol>
+      <label class="campo" style="margin-top:12px"><span>Carga livre</span><textarea data-bind="cargaLivre" rows="3" maxlength="2000"></textarea></label>
+    </section>
+
+    <section class="cartao">
+      <h2 class="secao-titulo">Tocha</h2>
+      <div class="tocha" id="tocha">
+        <div class="chama" aria-hidden="true">🔥</div>
+        <div class="tempo" id="tocha-tempo"></div>
+      </div>
+      <div class="tocha-botoes" id="tocha-botoes"></div>
+      <p class="dica">Acender gasta uma tocha do equipamento e dura 1 hora.</p>
     </section>
 
     <section class="cartao">
@@ -572,8 +888,85 @@ function telaFicha(mesa, id) {
 
     <div class="zona-perigo"><button class="btn sangue pequeno" id="apagar">Apagar personagem</button></div>`;
 
+    desenharEquip();
+    desenharMagias();
     sincronizarCampos(true);
     atualizarDerivados();
+  }
+
+  // ---------- equipamento: uma linha por ponto de FOR ----------
+  function linhasEquip(f) {
+    // mostra os espaços de FOR + itens que sobraram além da carga (se a FOR baixar)
+    const eq = Array.isArray(f.equipamento) ? f.equipamento : [];
+    let ultimo = -1;
+    eq.forEach((x, i) => { if (typeof x === "string" && x.trim()) ultimo = i; });
+    return Math.max(espacosTotais(f), ultimo + 1);
+  }
+  function desenharEquip() {
+    const ol = $("#equip");
+    if (!ol) return;
+    const f = ficha();
+    const n = linhasEquip(f);
+    const cap = espacosTotais(f);
+    ol.innerHTML = Array.from({ length: n }, (_, i) =>
+      `<li class="${i >= cap ? "excesso" : ""}"><span class="n">${i + 1}.</span><input data-bind="equipamento.${i}" maxlength="80" aria-label="Espaço ${i + 1}"></li>`).join("");
+    sincronizarCampos(true, ol);
+  }
+
+  // ---------- magias ----------
+  function desenharMagias() {
+    const ul = $("#magias");
+    if (!ul) return;
+    const lista = Array.isArray(ficha().magias) ? ficha().magias : [];
+    ul.innerHTML = lista.map((m, i) => m && m.falhou
+      ? `<li class="falhou"><span class="nome-magia">${esc(m.nome || "Magia sem nome")}</span><span class="selo-falhou" title="Bloqueada até o descanso longo">Falhou</span></li>`
+      : `<li><input data-bind="magias.${i}.nome" placeholder="Nome da magia" maxlength="60">
+          <button class="btn-falhou" data-falhou="${i}">Falhou</button>
+          <button class="icone-btn menor perigo" data-del-magia="${i}" aria-label="Remover magia">×</button></li>`).join("") ||
+      `<li class="dica">Nenhuma magia.</li>`;
+    sincronizarCampos(true, ul);
+  }
+
+  // ---------- tocha ----------
+  let intervaloTocha = null;
+  function atualizarTocha() {
+    const f = ficha();
+    const box = $("#tocha");
+    if (!f || !box) return;
+    const t = f.tocha || {};
+    const r = tochaRestante(t);
+    const acesa = !!t.acesa && r > 0;
+    box.classList.toggle("acesa", acesa);
+    const tempo = $("#tocha-tempo");
+    tempo.textContent = acesa ? fmtTempo(r) : t.acesa ? "Apagou" : r > 0 ? `${fmtTempo(r)} (pausada)` : "Apagada";
+    tempo.classList.toggle("fim", acesa && r < 5 * 60 * 1000);
+    const botoes = acesa
+      ? `<button class="btn fantasma pequeno" data-tocha="pausar">Pausar</button><button class="btn fantasma pequeno" data-tocha="apagar">Apagar</button>`
+      : `<button class="btn pequeno" data-tocha="acender">Acender tocha</button>${!t.acesa && r > 0 ? `<button class="btn fantasma pequeno" data-tocha="retomar">Retomar</button>` : ""}`;
+    const bx = $("#tocha-botoes");
+    if (bx.dataset.estado !== botoes) { bx.innerHTML = botoes; bx.dataset.estado = botoes; }
+    clearInterval(intervaloTocha);
+    if (acesa) intervaloTocha = setInterval(atualizarTocha, 1000);
+  }
+
+  function acenderTocha() {
+    const f = ficha();
+    const eq = Array.isArray(f.equipamento) ? f.equipamento : [];
+    const i = eq.findIndex((x) => typeof x === "string" && /toch/i.test(x));
+    if (i < 0) {
+      toast({ rotulo: "Sem tochas", valor: "🕯", detalhe: "Não há tocha no equipamento", tipo: "falha" });
+      return;
+    }
+    // "Tochas (3)" vira "Tochas (2)"; uma tocha sozinha libera o espaço
+    const txt = eq[i];
+    const m = txt.match(/\d+/);
+    const novo = m && Number(m[0]) > 1 ? txt.replace(m[0], String(Number(m[0]) - 1)) : "";
+    descarregar();
+    sync.set(id, ["equipamento", i], novo);
+    sync.set(id, ["tocha"], { acesa: true, restante: TOCHA_MS, desde: Date.now() });
+    desenharEquip();
+    atualizarDerivados();
+    toast({ rotulo: "Tocha acesa", valor: "🔥", detalhe: novo ? `Restou: ${novo}` : `"${txt}" saiu do equipamento` });
   }
 
   // ---------- leitura (dados -> tela) ----------
@@ -601,11 +994,15 @@ function telaFicha(mesa, id) {
     // XP: em Shadowdark o próximo nível exige nível × 10 XP
     const prox = $("#xp-prox");
     if (prox) prox.textContent = Math.max(1, Number(f.nivel) || 0) * 10;
-    // espaços de equipamento: FOR ou 10, o que for maior
+    // espaços de equipamento = FOR
     const cap = espacosTotais(f);
-    $$("#equip > li").forEach((li, i) => li.classList.toggle("alem", i >= cap));
+    const ol = $("#equip");
+    if (ol && ol.children.length !== linhasEquip(f) && !ol.contains(document.activeElement)) desenharEquip();
+    $$("#equip > li").forEach((li, i) => li.classList.toggle("excesso", i >= cap));
+    const usados = (f.equipamento || []).filter((x, i) => i < cap && typeof x === "string" && x.trim()).length;
     const info = $("#equip-info");
-    if (info) info.textContent = `Espaços disponíveis: ${cap} (FOR ou 10, o que for maior)`;
+    if (info) info.textContent = `${usados} de ${cap} espaços ocupados (espaços = FOR)`;
+    atualizarTocha();
   }
 
   // ---------- eventos ----------
@@ -630,6 +1027,41 @@ function telaFicha(mesa, id) {
     if (alvo.dataset.pv) {
       const atual = Number(f.pv?.atual) || 0;
       definir("pv.atual", atual + Number(alvo.dataset.pv));
+    } else if (alvo.id === "add-magia") {
+      descarregar();
+      const lista = [...(Array.isArray(f.magias) ? f.magias : []), { id: uid(), nome: "", falhou: false }];
+      sync.set(id, ["magias"], lista);
+      desenharMagias();
+      $("#magias > li:last-child input")?.focus();
+    } else if (alvo.dataset.falhou) {
+      const i = Number(alvo.dataset.falhou);
+      const nome = f.magias?.[i]?.nome || "esta magia";
+      if (confirm(`Marcar "${nome}" como falhou?\nEla fica bloqueada até o mestre dar o descanso longo.`)) {
+        descarregar();
+        sync.set(id, ["magias", i, "falhou"], true);
+        desenharMagias();
+      }
+    } else if (alvo.dataset.delMagia) {
+      const i = Number(alvo.dataset.delMagia);
+      if (f.magias?.[i]?.nome && !confirm(`Remover a magia "${f.magias[i].nome}"?`)) return;
+      descarregar();
+      sync.set(id, ["magias"], f.magias.filter((_, j) => j !== i));
+      desenharMagias();
+    } else if (alvo.dataset.tocha) {
+      const t = f.tocha || {};
+      const acao = alvo.dataset.tocha;
+      if (acao === "acender") {
+        if (t.acesa && tochaRestante(t) > 0 && !confirm("Já há uma tocha acesa. Acender outra (gasta mais uma)?")) return;
+        acenderTocha();
+      } else if (acao === "pausar") {
+        sync.set(id, ["tocha"], { acesa: false, restante: tochaRestante(t), desde: 0 });
+      } else if (acao === "retomar") {
+        sync.set(id, ["tocha"], { acesa: true, restante: tochaRestante(t), desde: Date.now() });
+      } else if (acao === "apagar") {
+        if (!confirm("Apagar a tocha? O tempo restante é perdido.")) return;
+        sync.set(id, ["tocha"], { acesa: false, restante: 0, desde: 0 });
+      }
+      atualizarTocha();
     } else if (alvo.id === "apagar") {
       const nome = f.nome || "este personagem";
       if (confirm(`Apagar ${nome} para sempre? Esta ação não tem volta.`)) {
@@ -658,6 +1090,9 @@ function telaFicha(mesa, id) {
     }
     if (!ficha()) return;
     if (ev.t === "upsert" || ev.t === "tudo" || ev.t === "delete") atualizarAbas();
+    const mexeu = (campo) => ev.t === "tudo" || (ev.t === "set" && ev.id === id && ev.path[0] === campo);
+    if (mexeu("magias") && !$("#magias")?.contains(document.activeElement)) desenharMagias();
+    if (mexeu("equipamento") && !$("#equip")?.contains(document.activeElement)) desenharEquip();
     sincronizarCampos();
     atualizarDerivados();
   });
@@ -680,6 +1115,7 @@ function telaFicha(mesa, id) {
 
   return () => {
     descarregar();
+    clearInterval(intervaloTocha);
     offSync();
     app.removeEventListener("input", aoDigitar);
     app.removeEventListener("change", aoDigitar);

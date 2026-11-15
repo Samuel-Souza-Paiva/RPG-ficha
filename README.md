@@ -10,8 +10,18 @@ Fichas de **Shadowdark** para celular, salvas em tempo real na Cloudflare.
 
 Campos da ficha (iguais à ficha impressa de Shadowdark): nome; FOR, DES, CON, INT, SAB e CAR (valor / modificador
 calculado); ancestralidade; classe; nível; XP (atual / próximo nível); PV; CA; título; alinhamento; antecedente;
-divindade; ataques; talentos/magias; equipamento com 20 espaços (os que passam da carga — FOR ou 10 — ficam
-apagados), PO/PP/PC e carga livre.
+divindade; ataques; talentos/magias; equipamento (uma linha por ponto de FOR), PO/PP/PC e carga livre.
+
+- **Tocha:** "Acender tocha" tira uma tocha do equipamento ("Tochas (3)" vira "Tochas (2)") e conta 1 hora.
+- **Magias:** use à vontade; ao falhar no teste, toque em **Falhou**. A magia fica bloqueada (o servidor
+  impede desmarcar) até o mestre dar o descanso longo.
+
+### Área do mestre (`#/mestre`, com login)
+
+- Painel ao vivo de todas as fichas da mesa (PV, tocha, magias bloqueadas).
+- **Descanso longo** por personagem ou para todos: PV no máximo e magias liberadas.
+- **Revelar imagem:** aparece em tela cheia para todos os jogadores por 10 segundos e some.
+- **Recapitulação:** anotações privadas do mestre, salvas automaticamente.
 
 ## Como funciona
 
@@ -26,6 +36,13 @@ Celular ──WebSocket──► Worker ──► Durable Object "Mesa" (1 por c
 
 ## Rodar localmente
 
+Crie um arquivo `.dev.vars` (já está no `.gitignore`) com o login do mestre:
+
+```
+MESTRE_USUARIO=seu-usuario
+MESTRE_SENHA=sua-senha
+```
+
 ```bash
 npm install
 npm run dev        # http://localhost:8787
@@ -39,7 +56,14 @@ npx wrangler login
 npm run deploy
 ```
 
-O comando mostra a URL (`https://rpg-ficha.<sua-conta>.workers.dev`). Durable Objects com SQLite funcionam
+Configure o login do mestre como *secrets* (não ficam no código nem no repositório):
+
+```bash
+npx wrangler secret put MESTRE_USUARIO
+npx wrangler secret put MESTRE_SENHA
+```
+
+O comando de deploy mostra a URL (`https://rpg-ficha.<sua-conta>.workers.dev`). Durable Objects com SQLite funcionam
 no plano gratuito.
 
 Alternativa sem terminal: no painel da Cloudflare, **Workers & Pages → Create → Import a repository**, escolha
@@ -51,5 +75,5 @@ este repositório e mantenha o comando de deploy padrão (`npx wrangler deploy`)
 
 ## Segurança
 
-Não há login: quem souber o código da mesa pode ver e editar as fichas. Use um código difícil de adivinhar
+Jogadores não têm login: quem souber o código da mesa pode ver e editar as fichas. A área do mestre exige usuário e senha (validados no servidor). Use um código difícil de adivinhar
 (ex.: `sombras-do-norte-7k2q`).
